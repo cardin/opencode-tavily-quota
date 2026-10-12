@@ -15,10 +15,27 @@ export default Plugin.define({
     await ctx.rpc.register(TavilyQuotaRpc, {
       usage: async () => {
         const connection = await ctx.integration.connection.active("tavily");
-        const credential = connection && await ctx.integration.connection.resolve(connection);
+        if (!connection) {
+          return { ok: false, message: "no active Tavily connection (run opencode auth login tavily)" };
+        }
+        // The host flags a connection whose saved credential needs sign-in again;
+        // report that instead of resolving it (or showing a generic error).
+        if (connection.status?.status === "needs_auth") {
+          return { ok: false, message: `Tavily needs re-authentication: ${connection.status.message}` };
+        }
+        // An external credential source keeps its secret outside the store, so
+        // there is no key for the plugin to read; point at the local options.
+        if (connection.type === "credential" && connection.method === "external") {
+          return {
+            ok: false,
+            message:
+              "Tavily is connected through an external credential source this plugin cannot read; set TAVILY_API_KEY or the apiKey plugin option",
+          };
+        }
+        const credential = await ctx.integration.connection.resolve(connection);
         const key = credential?.type === "key"
           ? credential.key
-          : connection?.type === "env"
+          : connection.type === "env"
             ? process.env[connection.name]
             : undefined;
         if (!key) {

@@ -18,6 +18,7 @@
 
 import type { RGBA } from "@opentui/core";
 import { Plugin } from "@opencode/plugin/tui";
+import type { ResolvedTheme } from "@opencode/theme/tui";
 import { createSignal } from "solid-js";
 import {
   fetchQuotaWithFallback,
@@ -48,17 +49,17 @@ type ThemeColors = {
 };
 
 /**
- * OpenCode 2.0.7 exposes `text.default` / `text.subdued`; later builds renamed
+ * OpenCode 2.0.7 exposed `text.default` / `text.subdued`; later builds renamed
  * the leaves to `text.base` / `text.muted`. Read whichever the running build
  * provides so the plugin matches the built-in quota sections on both.
  */
-function readThemeColors(context: Context): ThemeColors {
-  const text = context.theme.text as unknown as {
-    default?: RGBA;
-    base?: RGBA;
-    subdued?: RGBA;
-    muted?: RGBA;
-  };
+type LegacyTextTokens = ResolvedTheme["text"] & {
+  default?: RGBA;
+  subdued?: RGBA;
+};
+
+function readThemeColors(theme: ResolvedTheme): ThemeColors {
+  const text = theme.text as LegacyTextTokens;
   return {
     text: text.default ?? text.base,
     textMuted: text.subdued ?? text.muted,
@@ -80,7 +81,7 @@ export function buildLines(state: ViewState, now: number = Date.now()): string[]
 }
 
 function TavilyQuotaSidebar(props: { context: Context; state: () => ViewState }) {
-  const colors = () => readThemeColors(props.context);
+  const colors = () => readThemeColors(props.context.theme);
   // Keep the quota line on one line; let an error message wrap instead of
   // truncating it, since it can be longer than the sidebar.
   const wrapMode = () => (props.state().status === "error" ? "word" : "none");
@@ -129,7 +130,7 @@ function TavilyQuotaCommands(props: {
             title: "Tavily quota",
             message,
             variant: next.status === "error" ? "error" : "info",
-            ...(sessionID ? { sessionID } : {}),
+            sessionID,
           });
         },
       },

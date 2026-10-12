@@ -39,16 +39,22 @@
   },
   "homepage": "https://github.com/cardin/opencode-tavily-quota#readme",
   "dependencies": {
-    "@opencode/plugin": "^2.0.7",
-    "@opentui/core": "^0.5.11",
-    "@opentui/solid": "^0.5.11",
-    "solid-js": "^1.9.0"
+    "@opencode/plugin": "^2.0.27"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.17",
+    "@opentui/solid": ">=0.5.17",
+    "solid-js": ">=1.9.0"
   },
   "devDependencies": {
     "@babel/core": "^7.28.0",
     "@babel/preset-typescript": "^7.27.1",
+    "@opencode/theme": "^2.0.27",
+    "@opentui/core": ">=0.5.17",
+    "@opentui/solid": ">=0.5.17",
     "@types/node": "^22.0.0",
     "babel-preset-solid": "^1.9.12",
+    "solid-js": ">=1.9.0",
     "tsx": "^4.20.0",
     "typescript": "^5.6.0"
   },

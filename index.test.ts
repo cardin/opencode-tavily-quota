@@ -68,3 +68,56 @@ test("server RPC does not query Tavily when no active connection exists", async 
     message: "no active Tavily connection (run opencode auth login tavily)",
   });
 });
+
+test("server RPC reports a connection that needs re-authentication", async () => {
+  let handler: (() => Promise<unknown>) | undefined;
+  const ctx = {
+    rpc: {
+      register: async (_definition: unknown, handlers: { usage: () => Promise<unknown> }) => {
+        handler = handlers.usage;
+      },
+    },
+    integration: {
+      connection: {
+        active: async () => ({
+          type: "credential",
+          id: "cred_1",
+          label: "Tavily",
+          method: "key",
+          status: { status: "needs_auth", message: "token expired" },
+        }),
+        resolve: async () => { throw new Error("should not resolve a connection needing auth"); },
+      },
+    },
+  };
+  await plugin.setup(ctx as Parameters<typeof plugin.setup>[0]);
+  assert.ok(handler);
+  assert.deepEqual(await handler(), {
+    ok: false,
+    message: "Tavily needs re-authentication: token expired",
+  });
+});
+
+test("server RPC explains an external credential source without resolving it", async () => {
+  let handler: (() => Promise<unknown>) | undefined;
+  const ctx = {
+    rpc: {
+      register: async (_definition: unknown, handlers: { usage: () => Promise<unknown> }) => {
+        handler = handlers.usage;
+      },
+    },
+    integration: {
+      connection: {
+        active: async () => ({ type: "credential", id: "cred_1", label: "Tavily", method: "external" }),
+        resolve: async () => { throw new Error("should not resolve an external credential"); },
+      },
+    },
+  };
+  await plugin.setup(ctx as Parameters<typeof plugin.setup>[0]);
+  assert.ok(handler);
+  assert.deepEqual(await handler(), {
+    ok: false,
+    message:
+      "Tavily is connected through an external credential source this plugin cannot read; set TAVILY_API_KEY or the apiKey plugin option",
+  });
+});
