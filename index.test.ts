@@ -29,7 +29,7 @@ test("server RPC resolves the active Tavily login and returns quota without the 
         },
       },
     };
-    await plugin.setup(ctx as Parameters<typeof plugin.setup>[0]);
+    await plugin.setup(ctx as unknown as Parameters<typeof plugin.setup>[0]);
     assert.ok(handler);
     const result = await handler();
     assert.equal(authHeader, "Bearer saved-key");
@@ -61,7 +61,7 @@ test("server RPC does not query Tavily when no active connection exists", async 
       },
     },
   };
-  await plugin.setup(ctx as Parameters<typeof plugin.setup>[0]);
+  await plugin.setup(ctx as unknown as Parameters<typeof plugin.setup>[0]);
   assert.ok(handler);
   assert.deepEqual(await handler(), {
     ok: false,
@@ -90,7 +90,7 @@ test("server RPC reports a connection that needs re-authentication", async () =>
       },
     },
   };
-  await plugin.setup(ctx as Parameters<typeof plugin.setup>[0]);
+  await plugin.setup(ctx as unknown as Parameters<typeof plugin.setup>[0]);
   assert.ok(handler);
   assert.deepEqual(await handler(), {
     ok: false,
@@ -113,7 +113,7 @@ test("server RPC explains an external credential source without resolving it", a
       },
     },
   };
-  await plugin.setup(ctx as Parameters<typeof plugin.setup>[0]);
+  await plugin.setup(ctx as unknown as Parameters<typeof plugin.setup>[0]);
   assert.ok(handler);
   assert.deepEqual(await handler(), {
     ok: false,

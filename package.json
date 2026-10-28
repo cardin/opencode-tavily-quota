@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-tavily-quota",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "OpenCode 2 TUI plugin that shows remaining Tavily API credits in the sidebar.",
   "type": "module",
   "license": "MIT",
@@ -18,7 +18,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
     "test": "tsx --test usage.test.ts index.test.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -39,7 +39,7 @@
   },
   "homepage": "https://github.com/cardin/opencode-tavily-quota#readme",
   "dependencies": {
-    "@opencode/plugin": "^2.0.27"
+    "@opencode/plugin": "^2.2.0"
   },
   "peerDependencies": {
     "@opentui/core": ">=0.5.17",
@@ -49,9 +49,9 @@
   "devDependencies": {
     "@babel/core": "^7.28.0",
     "@babel/preset-typescript": "^7.27.1",
-    "@opencode/theme": "^2.0.27",
-    "@opentui/core": ">=0.5.17",
-    "@opentui/solid": ">=0.5.17",
+    "@opencode/theme": "^2.2.0",
+    "@opentui/core": "^0.7.0",
+    "@opentui/solid": "^0.7.0",
     "@types/node": "^22.0.0",
     "babel-preset-solid": "^1.9.12",
     "solid-js": ">=1.9.0",

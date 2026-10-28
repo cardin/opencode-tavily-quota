@@ -37,6 +37,11 @@ export const PLUGIN_ID = "opencode-tavily-quota";
 // Tavily's `/usage` endpoint allows at most 10 requests per 10 minutes, so poll
 // once per window and rely on the `/tavily-quota` command for on-demand reads.
 const REFRESH_INTERVAL_MS = 600_000;
+// Show a persisted snapshot for a few minutes instead of fetching on every TUI
+// launch. Several launches in a row would otherwise exhaust the rate limit.
+const CACHE_TTL_MS = 5 * 60_000;
+// After a 429, skip automatic reads for a full rate-limit window.
+const RATE_LIMIT_BACKOFF_MS = 10 * 60_000;
 
 type ViewState =
   | { status: "loading" }
@@ -102,7 +107,7 @@ function TavilyQuotaSidebar(props: { context: Context; state: () => ViewState })
 
 function TavilyQuotaCommands(props: {
   context: Context;
-  refresh: () => Promise<ViewState>;
+  refresh: (force?: boolean) => Promise<ViewState>;
 }) {
   props.context.keymap.layer(() => ({
     mode: "global",
@@ -115,7 +120,7 @@ function TavilyQuotaCommands(props: {
         palette: true,
         slash: { name: "tavily-quota" },
         run: async () => {
-          const next = await props.refresh();
+          const next = await props.refresh(true);
           const message =
             next.status === "ready"
               ? `${formatRemaining(next.snapshot)} · ${formatPercent(next.snapshot.percentRemaining)} · ${formatResetLine()}`
@@ -144,6 +149,11 @@ export const TavilyQuotaTuiPlugin = Plugin.define({
   id: PLUGIN_ID,
   async setup(context) {
     const [state, setState] = createSignal<ViewState>({ status: "loading" });
+    // Persist the last successful snapshot so a fresh TUI launch can show it
+    // without spending one of the ten requests allowed per ten minutes.
+    const [cache, updateCache] = context.storage.store("quota", {
+      initial: { snapshot: null as QuotaSnapshot | null, at: 0 },
+    });
     const apiKey = typeof context.options.apiKey === "string" ? context.options.apiKey : undefined;
     const remote = context.client.rpc(TavilyQuotaRpc);
     const refreshMs =
@@ -153,9 +163,11 @@ export const TavilyQuotaTuiPlugin = Plugin.define({
 
     let disposed = false;
     let inFlight = false;
+    let cooldownUntil = 0;
 
-    const refresh = async (): Promise<ViewState> => {
+    const refresh = async (force = false): Promise<ViewState> => {
       if (inFlight) return state();
+      if (!force && Date.now() < cooldownUntil) return state();
       inFlight = true;
       try {
         const result = await fetchQuotaWithFallback({
@@ -164,12 +176,21 @@ export const TavilyQuotaTuiPlugin = Plugin.define({
             location: context.location ?? context.data.location.default(),
           }) as Promise<QuotaResult>,
         });
-        if (!disposed) {
-          setState(
-            result.ok
-              ? { status: "ready", snapshot: result.snapshot }
-              : { status: "error", message: result.message },
-          );
+        if (result.ok) {
+          cooldownUntil = 0;
+          if (!disposed) setState({ status: "ready", snapshot: result.snapshot });
+          void updateCache((draft) => {
+            draft.snapshot = result.snapshot;
+            draft.at = Date.now();
+          }).catch(() => undefined);
+        } else {
+          // The endpoint allows 10 requests per 10 minutes. An explicit
+          // `/tavily-quota` run passes force=true and still tries; automatic
+          // reads wait out the window.
+          if (result.message.startsWith("rate limited")) {
+            cooldownUntil = Date.now() + RATE_LIMIT_BACKOFF_MS;
+          }
+          if (!disposed) setState({ status: "error", message: result.message });
         }
       } catch (error) {
         // `fetchQuota` is written never to throw, but a rejected promise here
@@ -198,7 +219,12 @@ export const TavilyQuotaTuiPlugin = Plugin.define({
       render: () => <TavilyQuotaCommands context={context} refresh={refresh} />,
     });
 
-    void refresh();
+    const cached = cache.snapshot;
+    if (cached && Date.now() - cache.at < CACHE_TTL_MS) {
+      setState({ status: "ready", snapshot: cached });
+    } else {
+      void refresh();
+    }
     const interval = setInterval(() => void refresh(), refreshMs);
 
     return () => {
