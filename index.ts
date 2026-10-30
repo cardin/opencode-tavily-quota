@@ -5,7 +5,7 @@
 
 import { Plugin } from "@opencode/plugin";
 import { TavilyQuotaRpc } from "./rpc";
-import { fetchQuota } from "./usage";
+import { fetchCachedQuota } from "./quota-client";
 
 export const PLUGIN_ID = "opencode-tavily-quota";
 
@@ -13,7 +13,8 @@ export default Plugin.define({
   id: PLUGIN_ID,
   async setup(ctx) {
     await ctx.rpc.register(TavilyQuotaRpc, {
-      usage: async () => {
+      usage: async (input) => {
+        const force = typeof input === "object" && input !== null && "force" in input && input.force === true;
         const connection = await ctx.integration.connection.active("tavily");
         if (!connection) {
           return { ok: false, message: "no active Tavily connection (run opencode auth login tavily)" };
@@ -41,7 +42,7 @@ export default Plugin.define({
         if (!key) {
           return { ok: false, message: "no active Tavily connection (run opencode auth login tavily)" };
         }
-        return fetchQuota({ apiKey: key, env: {} });
+        return fetchCachedQuota({ apiKey: key, env: {}, force });
       },
     });
   },

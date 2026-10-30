@@ -11,7 +11,6 @@ import {
   deriveSnapshot,
   expandOptionValue,
   fetchQuota,
-  fetchQuotaWithFallback,
   formatPercent,
   formatQuotaLine,
   formatRemaining,
@@ -286,6 +285,45 @@ test("fetchQuota maps HTTP failures to messages", async () => {
   }
 });
 
+test("fetchQuota parses Retry-After seconds and HTTP dates with a safe fallback", async () => {
+  const now = Date.UTC(2026, 9, 30, 12);
+  const cases: Array<[string | undefined, number]> = [
+    ["120", now + 120_000],
+    ["Fri, 30 Oct 2026 12:30:00 GMT", now + 30 * 60_000],
+    ["0", now],
+    ["Fri, 30 Oct 2026 11:00:00 GMT", now],
+    [undefined, now + 600_000],
+    ["", now + 600_000],
+    ["not a date", now + 600_000],
+    ["-1", now + 600_000],
+    ["+1", now + 600_000],
+  ];
+  for (const [header, expected] of cases) {
+    const result = await fetchQuota({
+      apiKey: "mock-key", env: {}, now,
+      fetchImpl: async () => new Response("", {
+        status: 429,
+        headers: header === undefined ? {} : { "Retry-After": header },
+      }),
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.retryAt, expected, `Retry-After: ${header}`);
+  }
+});
+
+test("fetchQuota measures Retry-After from the response, not the request start", async () => {
+  let now = 1_000;
+  const result = await fetchQuota({
+    apiKey: "mock-key", env: {}, now: () => now,
+    fetchImpl: async () => {
+      now += 15_000;
+      return new Response("", { status: 429, headers: { "Retry-After": "120" } });
+    },
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.retryAt, 136_000);
+});
+
 test("fetchQuota reports invalid JSON", async () => {
   const result = await fetchQuota({
     env: { TAVILY_API_KEY: "k" },
@@ -351,33 +389,4 @@ test("fetchQuota surfaces a bad file reference without calling fetch", async () 
   assert.equal(called, false);
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.message, /bad file reference: "\{file:\/missing\}"/);
-});
-
-test("fetchQuotaWithFallback uses OpenCode only when the CLI has no key", async () => {
-  let remoteCalls = 0;
-  let authorization: string | null = null;
-  const remote = async () => {
-    remoteCalls++;
-    return { ok: false as const, message: "not connected" };
-  };
-  const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
-    authorization = new Headers(init?.headers).get("authorization");
-    return jsonResponse(KEY_PAYLOAD);
-  }) as typeof fetch;
-
-  const local = await fetchQuotaWithFallback({
-    env: { TAVILY_API_KEY: "env-key" }, apiKey: "option-key", remote, fetchImpl,
-  });
-  assert.equal(local.ok, true);
-  assert.equal(authorization, "Bearer env-key");
-  assert.equal(remoteCalls, 0);
-
-  const option = await fetchQuotaWithFallback({ env: {}, apiKey: "option-key", remote, fetchImpl });
-  assert.equal(option.ok, true);
-  assert.equal(authorization, "Bearer option-key");
-  assert.equal(remoteCalls, 0);
-
-  const connected = await fetchQuotaWithFallback({ env: {}, remote, fetchImpl });
-  assert.deepEqual(connected, { ok: false, message: "not connected" });
-  assert.equal(remoteCalls, 1);
 });

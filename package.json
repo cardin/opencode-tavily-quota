@@ -19,7 +19,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run build",
-    "test": "tsx --test usage.test.ts index.test.ts",
+    "test": "tsx --test usage.test.ts index.test.ts quota-client.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -39,7 +39,8 @@
   },
   "homepage": "https://github.com/cardin/opencode-tavily-quota#readme",
   "dependencies": {
-    "@opencode/plugin": "^2.2.0"
+    "@opencode/plugin": "^2.2.0",
+    "proper-lockfile": "^4.1.2"
   },
   "peerDependencies": {
     "@opentui/core": ">=0.5.17",
@@ -53,6 +54,7 @@
     "@opentui/core": "^0.7.0",
     "@opentui/solid": "^0.7.0",
     "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "^4.1.4",
     "babel-preset-solid": "^1.9.12",
     "solid-js": ">=1.9.0",
     "tsx": "^4.20.0",

@@ -5,12 +5,17 @@ export const TavilyQuotaRpc = Rpc.define({
   id: "opencode-tavily-quota",
   methods: {
     usage: {
-      input: { type: "object", properties: {}, additionalProperties: false },
+      input: {
+        type: "object",
+        properties: { force: { type: "boolean" } },
+        additionalProperties: false,
+      },
       output: {
         type: "object",
         properties: {
           ok: { type: "boolean" },
           message: { type: "string" },
+          retryAt: { type: "number" },
           snapshot: {
             type: "object",
             properties: {

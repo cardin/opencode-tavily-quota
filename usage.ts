@@ -16,6 +16,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 export const USAGE_URL = "https://api.tavily.com/usage";
 export const DEFAULT_TIMEOUT_MS = 15_000;
+export const RATE_LIMIT_BACKOFF_MS = 10 * 60_000;
 
 /**
  * Sidebar content width shared with the built-in quota section, which renders
@@ -67,7 +68,7 @@ export interface QuotaSnapshot {
 
 export type QuotaResult =
   | { ok: true; snapshot: QuotaSnapshot }
-  | { ok: false; message: string };
+  | { ok: false; message: string; retryAt?: number };
 
 export interface FetchQuotaOptions {
   /** Environment to read `TAVILY_API_KEY` from. Defaults to `process.env`. */
@@ -85,26 +86,7 @@ export interface FetchQuotaOptions {
   /** Injectable fetch, used by tests. Defaults to the global `fetch`. */
   fetchImpl?: typeof fetch;
   /** Injectable clock, used by tests. Defaults to `Date.now`. */
-  now?: number;
-}
-
-/** Prefer CLI credentials; ask the server only when the CLI has no key. */
-export async function fetchQuotaWithFallback(
-  options: FetchQuotaOptions & { remote: () => Promise<QuotaResult> },
-): Promise<QuotaResult> {
-  try {
-    const key = resolveApiKey(options.env, options.apiKey, options);
-    if (key) return fetchQuota({ ...options, apiKey: key, env: {} });
-  } catch {
-    // Preserve the existing inline error for an unreadable {file:...} option.
-    return fetchQuota(options);
-  }
-  try {
-    return await options.remote();
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    return { ok: false, message: `OpenCode Tavily credential unavailable: ${reason}` };
-  }
+  now?: number | (() => number);
 }
 
 function finite(value: unknown): number | null {
@@ -340,7 +322,18 @@ export async function fetchQuota(options: FetchQuotaOptions = {}): Promise<Quota
     return { ok: false, message: "API key rejected (401)" };
   }
   if (response.status === 429) {
-    return { ok: false, message: "rate limited on /usage (10 req / 10 min)" };
+    const now = typeof options.now === "function" ? options.now() : options.now ?? Date.now();
+    const header = response.headers.get("Retry-After")?.trim();
+    const retryAt = header
+      ? /^\d+(?:\.\d+)?$/.test(header)
+        ? now + Number(header) * 1000
+        : /^[+-]?[\d.]+$/.test(header) ? NaN : Date.parse(header)
+      : NaN;
+    return {
+      ok: false,
+      message: "rate limited on /usage (10 req / 10 min)",
+      retryAt: Number.isFinite(retryAt) ? Math.max(now, retryAt) : now + RATE_LIMIT_BACKOFF_MS,
+    };
   }
   if (!response.ok) {
     return { ok: false, message: `HTTP ${response.status} from /usage` };
@@ -353,5 +346,5 @@ export async function fetchQuota(options: FetchQuotaOptions = {}): Promise<Quota
     return { ok: false, message: "invalid JSON from /usage" };
   }
 
-  return deriveSnapshot(payload, options.now);
+  return deriveSnapshot(payload, typeof options.now === "function" ? options.now() : options.now);
 }
