@@ -15,5 +15,17 @@
     "forceConsistentCasingInFileNames": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["index.ts", "tui.tsx", "usage.ts", "quota-client.ts", "*.test.ts"]
+  "include": [
+    "index.ts",
+    "tui.tsx",
+    "usage.ts",
+    "quota-cache.ts",
+    "refresh.ts",
+    "usage.test.ts",
+    "quota-cache.test.ts",
+    "quota-process.test.ts",
+    "refresh.test.ts",
+    "index.test.ts",
+    "tui.test.ts"
+  ]
 }

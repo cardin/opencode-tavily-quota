@@ -2,7 +2,7 @@
 
 See how many Tavily API credits you have left without leaving OpenCode.
 
-![The Tavily quota section in the OpenCode session sidebar](docs/sidebar.png)
+![The Tavily quota section in the OpenCode session sidebar](https://raw.githubusercontent.com/cardin/opencode-tavily-quota/main/docs/sidebar.png)
 
 The plugin adds a **Tavily** section to the session sidebar with:
 
@@ -30,8 +30,8 @@ is not loaded twice.
 
 `opencode plugin add` is the recommended install: it registers both halves of the
 plugin and can use OpenCode's Tavily connection. If you list the package in
-`cli.json` instead, only the sidebar half runs. That is fine when you supply a
-local key, but the OpenCode connection is not available in that setup.
+`cli.json` instead, only the sidebar half runs and cannot reach the quota RPC.
+Install both halves, and configure `apiKey` or `TAVILY_API_KEY` on the server.
 
 ## Connect Tavily
 
@@ -59,13 +59,16 @@ The sidebar refreshes every 10 minutes. To refresh immediately:
 - run `/tavily-quota`, or
 - press `Ctrl+P` and choose **Refresh Tavily quota**.
 
-A toast then shows the credits left, the percentage remaining, and the reset
-countdown.
+A manual refresh bypasses the server's fresh snapshot cache, but it still
+respects a `Retry-After` cooldown and keeps at least 65 seconds between real
+requests. A toast then shows the credits left, the percentage remaining, and the
+reset countdown. Switching Tavily credentials or updating the integration
+refreshes the sidebar automatically.
 
 Quota checks share a per-key cache and request lock across sessions, locations,
-and terminals that use the same cache directory. Automatic reads reuse a
-snapshot for five minutes. Manual refresh can bypass that freshness cache, but
-never the 65-second minimum between requests or an active rate-limit cooldown.
+terminals, and separate servers using the same cache directory. Automatic reads
+reuse a snapshot for five minutes. Manual refresh and credential-change events
+cannot bypass the 65-second minimum or an active rate-limit cooldown.
 
 ## Configuration
 
@@ -86,8 +89,8 @@ Options go on the plugin entry in `cli.json` or `opencode.json`:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `apiKey` | unset | Tavily API key. `{file:...}` and `{env:...}` are expanded by the plugin, so the raw key can stay out of the file. |
-| `refreshMs` | `600000` | How often to check for updates, in milliseconds. Cached reads do not send an HTTP request; keeping the default is recommended. |
+| `apiKey` | unset | Tavily API key, read by the OpenCode server. `{file:...}` and `{env:...}` are expanded by the plugin, so the raw key can stay out of the file. |
+| `refreshMs` | `600000` | How often to refresh, in milliseconds. Values below `60000` or above the 32-bit timer maximum fall back to the default. Tavily allows 10 requests per 10 minutes, so keep this at or above `600000`. |
 
 `{file:PATH}` reads a file's trimmed contents; `~/` expands to your home
 directory. `{env:NAME}` reads an environment variable. A missing or unreadable
@@ -114,21 +117,30 @@ server's Tavily connection, install the plugin on the server as well.
   your local reset by a few hours.
 - Only quota numbers are sent back to the terminal; the API key stays with the
   code that talks to Tavily.
-- Quota snapshots and cooldowns live under
-  `${XDG_CACHE_HOME:-~/.cache}/opencode-tavily-quota`, indexed by a SHA-256 key
-  fingerprint. Cache files contain no API key. Both local keys and the server's
-  saved Tavily connection use this cache, with a lock preventing concurrent
-  requests from separate processes.
-- Separate machines or different cache directories do not share a throttle.
-  Other applications using the same key can still exhaust Tavily's limit.
+- The server caches the last snapshot for up to five minutes, enforces a
+  65-second minimum between real requests, and remembers a `Retry-After`
+  cooldown, so opening several terminals or restarting the TUI does not use up
+  the request limit. The cache is scoped to the credential, so
+  switching Tavily accounts cannot show another account's credits.
+- The same cache entries are mirrored in OpenCode's plugin storage and shared
+  under `${XDG_CACHE_HOME:-~/.cache}/opencode-tavily-quota`. Files contain quota
+  data and a credential fingerprint, never the key. An inter-process lock and
+  atomic writes prevent concurrent servers from spending extra requests; even
+  an interrupted request reserves its minimum interval. Different machines or
+  cache directories, and other applications using the same key, are not
+  coordinated.
+- Tavily plan credits and pay-as-you-go credits are shown together. If the plan
+  is exhausted, any remaining PAYG credits keep the bar above zero.
 
 ## Development
 
-Source lives in `index.ts` (OpenCode server), `quota-client.ts` (shared cache and
-request coordination), `usage.ts` (HTTP client and formatting), and `tui.tsx`
-(sidebar and command). Run `npm install`, `npm test`, `npm run typecheck`, and
-`npm run build`. Tests use temporary cache directories and mocked HTTP requests,
-including the separate-process regression test; they need no Tavily credentials.
+Source lives in `index.ts` (OpenCode server), `quota-cache.ts` (shared cache,
+inter-process locking and rate-limit backoff), `refresh.ts` (TUI refresh policy),
+`usage.ts` (Tavily client and formatting), and `tui.tsx` (sidebar and command). Run `npm install`,
+`npm test`, `npm run typecheck`, and `npm run build`.
+
+Tests use sandboxed cache directories and mocked HTTP, including the
+separate-process regressions. They do not need Tavily credentials or a browser.
 
 ## License
 
