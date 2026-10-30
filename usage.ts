@@ -67,7 +67,7 @@ export interface QuotaSnapshot {
 
 export type QuotaResult =
   | { ok: true; snapshot: QuotaSnapshot }
-  | { ok: false; message: string };
+  | { ok: false; message: string; rateLimited?: boolean; retryAfterMs?: number };
 
 export interface FetchQuotaOptions {
   /** Environment to read `TAVILY_API_KEY` from. Defaults to `process.env`. */
@@ -92,13 +92,15 @@ export interface FetchQuotaOptions {
 export async function fetchQuotaWithFallback(
   options: FetchQuotaOptions & { remote: () => Promise<QuotaResult> },
 ): Promise<QuotaResult> {
+  let key: string;
   try {
-    const key = resolveApiKey(options.env, options.apiKey, options);
-    if (key) return fetchQuota({ ...options, apiKey: key, env: {} });
-  } catch {
-    // Preserve the existing inline error for an unreadable {file:...} option.
-    return fetchQuota(options);
+    key = resolveApiKey(options.env, options.apiKey, options);
+  } catch (error) {
+    // A `{file:...}` option can point at a missing or unreadable file; surface
+    // that inline instead of reading the same reference a second time.
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
+  if (key) return fetchQuota({ ...options, apiKey: key, env: {} });
   try {
     return await options.remote();
   } catch (error) {
@@ -109,6 +111,35 @@ export async function fetchQuotaWithFallback(
 
 function finite(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** A finite, strictly positive limit, or `0` when the field is absent/unusable. */
+function positive(value: unknown): number {
+  const parsed = finite(value);
+  return parsed !== null && parsed > 0 ? parsed : 0;
+}
+
+/** Read a JSON object field without trusting the payload shape. */
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * Parse a `Retry-After` header (delta-seconds or an HTTP date) into
+ * milliseconds. Returns `undefined` when the header is absent or malformed.
+ */
+export function parseRetryAfter(value: string | null | undefined, now: number = Date.now()): number | undefined {
+  const raw = (value ?? "").trim();
+  if (!raw) return undefined;
+  if (/^\d+$/.test(raw)) {
+    const seconds = Number(raw);
+    return Number.isSafeInteger(seconds) ? seconds * 1000 : undefined;
+  }
+  const date = Date.parse(raw);
+  if (!Number.isFinite(date)) return undefined;
+  return Math.max(0, date - now);
 }
 
 /**
@@ -186,28 +217,53 @@ export function resolveApiKey(
 /**
  * Derive the headline credit quota from a `/usage` payload.
  *
- * Prefers the account plan (`plan_limit`/`plan_usage`) because a per-key limit
- * is often `null` while the account still has a monthly allowance. Falls back
- * to the key limit when no positive plan limit is reported.
+ * Prefers the account allowance (`plan_limit` plus any `paygo_limit`) because a
+ * per-key limit is often `null` while the account still has credits. Within the
+ * account allowance, plan and pay-as-you-go credits are summed separately so an
+ * exhausted plan still reports the PAYG credits that remain. Falls back to the
+ * key limit when the account reports no allowance at all.
+ *
+ * Usage must be reported for every limit that is used; a missing value is an
+ * error rather than a fabricated zero.
  */
 export function deriveSnapshot(
   payload: TavilyUsagePayload,
   now: number = Date.now(),
 ): QuotaResult {
-  const account = payload.account ?? {};
-  const key = payload.key ?? {};
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, message: "invalid /usage response" };
+  }
 
-  const planLimit = finite(account.plan_limit);
+  const account = record(payload.account);
+  const key = record(payload.key);
+
+  const planLimit = positive(account.plan_limit);
   const planUsage = finite(account.plan_usage);
-  const keyLimit = finite(key.limit);
+  const paygoLimit = positive(account.paygo_limit);
+  const paygoUsage = finite(account.paygo_usage);
+  const keyLimit = positive(key.limit);
   const keyUsage = finite(key.usage);
 
-  const usePlan = planLimit !== null && planLimit > 0;
-  const limit = usePlan ? planLimit : keyLimit;
-  const used = usePlan ? planUsage ?? 0 : keyUsage ?? 0;
-
-  if (limit === null || limit <= 0) {
-    return { ok: false, message: "Tavily returned no credit limit for this key" };
+  let limit: number;
+  let used: number;
+  if (planLimit > 0 || paygoLimit > 0) {
+    if (planLimit > 0 && planUsage === null) {
+      return { ok: false, message: "Tavily returned no plan usage for this account" };
+    }
+    if (paygoLimit > 0 && paygoUsage === null) {
+      return { ok: false, message: "Tavily returned no pay-as-you-go usage for this account" };
+    }
+    limit = planLimit + paygoLimit;
+    used = (planLimit > 0 ? planUsage ?? 0 : 0) + (paygoLimit > 0 ? paygoUsage ?? 0 : 0);
+  } else {
+    if (keyLimit === 0) {
+      return { ok: false, message: "Tavily returned no credit limit for this key" };
+    }
+    if (keyUsage === null) {
+      return { ok: false, message: "Tavily returned no credit usage for this key" };
+    }
+    limit = keyLimit;
+    used = keyUsage;
   }
 
   const remaining = Math.max(0, limit - used);
@@ -229,18 +285,35 @@ export function deriveSnapshot(
   };
 }
 
-/** Format a remaining percentage for the sidebar. */
+/**
+ * Format a remaining percentage for the sidebar.
+ *
+ * Values that round to `10.0` at one decimal place switch to zero decimals so
+ * the label never grows past the 9-character percent column (`10% left`).
+ */
 export function formatPercent(percentRemaining: number): string {
   const clamped = Math.max(0, Math.min(100, percentRemaining));
-  return `${clamped.toFixed(clamped >= 10 ? 0 : 1)}%`;
+  const tenths = Math.round(clamped * 10) / 10;
+  return `${clamped.toFixed(tenths >= 10 ? 0 : 1)}%`;
+}
+
+/** Number of filled cells in a bar of `width` cells. */
+function barFill(percentRemaining: number, width: number): { filled: number; width: number } {
+  const clamped = Math.max(0, Math.min(100, percentRemaining));
+  const safeWidth = Math.max(1, Math.floor(width));
+  return { filled: Math.round((clamped / 100) * safeWidth), width: safeWidth };
 }
 
 /** Render a fixed-width progress bar for a remaining percentage. */
 export function progressBar(percentRemaining: number, width = DEFAULT_BAR_WIDTH): string {
-  const clamped = Math.max(0, Math.min(100, percentRemaining));
-  const safeWidth = Math.max(1, Math.floor(width));
-  const filled = Math.round((clamped / 100) * safeWidth);
-  return "█".repeat(filled) + "░".repeat(Math.max(0, safeWidth - filled));
+  const bar = barFill(percentRemaining, width);
+  return "█".repeat(bar.filled) + "░".repeat(Math.max(0, bar.width - bar.filled));
+}
+
+/** The percentage the rendered bar actually shows, so its label can match. */
+export function barPercent(percentRemaining: number, width = DEFAULT_BAR_WIDTH): number {
+  const bar = barFill(percentRemaining, width);
+  return (bar.filled / bar.width) * 100;
 }
 
 /**
@@ -249,12 +322,14 @@ export function progressBar(percentRemaining: number, width = DEFAULT_BAR_WIDTH)
  * The bar matches the built-in quota section's bars and the label sits in the
  * same right-aligned percent column, so the two sections line up. The exact
  * credit count is still available from `formatRemaining` (used by the toast).
+ * The label is derived from the rendered bar so the number and the filled cells
+ * never disagree.
  */
 export function formatQuotaLine(
   snapshot: QuotaSnapshot,
   width = DEFAULT_BAR_WIDTH,
 ): string {
-  const label = `${formatPercent(snapshot.percentRemaining)} left`;
+  const label = `${formatPercent(barPercent(snapshot.percentRemaining, width))} left`;
   return `${progressBar(snapshot.percentRemaining, width)}${BAR_SEPARATOR}${label.padStart(PERCENT_COLUMN_WIDTH)}`;
 }
 
@@ -340,7 +415,12 @@ export async function fetchQuota(options: FetchQuotaOptions = {}): Promise<Quota
     return { ok: false, message: "API key rejected (401)" };
   }
   if (response.status === 429) {
-    return { ok: false, message: "rate limited on /usage (10 req / 10 min)" };
+    return {
+      ok: false,
+      message: "rate limited on /usage (10 req / 10 min)",
+      rateLimited: true,
+      retryAfterMs: parseRetryAfter(response.headers.get("retry-after"), options.now ?? Date.now()),
+    };
   }
   if (!response.ok) {
     return { ok: false, message: `HTTP ${response.status} from /usage` };

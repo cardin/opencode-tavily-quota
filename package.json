@@ -6,20 +6,36 @@
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./server": "./dist/index.js",
-    "./tui": "./dist/tui.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
+    },
+    "./rpc": {
+      "types": "./dist/rpc.d.ts",
+      "import": "./dist/rpc.js"
+    }
   },
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs"
   ],
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "node scripts/build.mjs && npm run build:types",
+    "build:types": "tsc -p tsconfig.build.json && node scripts/types.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run build",
-    "test": "tsx --test usage.test.ts index.test.ts",
+    "test": "tsx --test usage.test.ts quota-cache.test.ts refresh.test.ts index.test.ts tui.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -39,22 +55,22 @@
   },
   "homepage": "https://github.com/cardin/opencode-tavily-quota#readme",
   "dependencies": {
-    "@opencode/plugin": "^2.2.0"
+    "@opencode/plugin": "^2.2.3"
   },
   "peerDependencies": {
-    "@opentui/core": ">=0.5.17",
-    "@opentui/solid": ">=0.5.17",
-    "solid-js": ">=1.9.0"
+    "@opentui/core": ">=0.8.0",
+    "@opentui/solid": ">=0.8.0",
+    "solid-js": ">=1.9.16"
   },
   "devDependencies": {
     "@babel/core": "^7.28.0",
     "@babel/preset-typescript": "^7.27.1",
-    "@opencode/theme": "^2.2.0",
-    "@opentui/core": "^0.7.0",
-    "@opentui/solid": "^0.7.0",
+    "@opencode/theme": "^2.2.3",
+    "@opentui/core": "^0.8.0",
+    "@opentui/solid": "^0.8.0",
     "@types/node": "^22.0.0",
     "babel-preset-solid": "^1.9.12",
-    "solid-js": ">=1.9.0",
+    "solid-js": "^1.9.18",
     "tsx": "^4.20.0",
     "typescript": "^5.6.0"
   },

@@ -7,10 +7,9 @@
  * (`sidebar.content`) and exposes a `/tavily-quota` slash command /
  * "Refresh Tavily quota" palette command that re-fetches on demand.
  *
- * The plugin owns no session state: Tavily credits are account-wide, so a
- * single snapshot is shared by every sidebar render and refreshed on a timer.
- * Colors follow the built-in quota sections: the heading uses the default text
- * color and the body (bar included) uses the muted/subdued text color.
+ * The server owns the quota cache and the rate-limit cooldown; this half only
+ * decides when to ask for a snapshot. A local one-minute clock keeps the reset
+ * countdown current without polling Tavily.
  *
  * Authenticate with `TAVILY_API_KEY`, the `apiKey` plugin option in `cli.json`,
  * or OpenCode's active Tavily integration. A saved key is used server-side.
@@ -21,32 +20,18 @@ import { Plugin } from "@opencode/plugin/tui";
 import type { ResolvedTheme } from "@opencode/theme/tui";
 import { createSignal } from "solid-js";
 import {
-  fetchQuotaWithFallback,
   formatPercent,
   formatQuotaLine,
   formatRemaining,
   formatResetLine,
-  type QuotaSnapshot,
 } from "./usage";
-import type { QuotaResult } from "./usage";
+import type { QuotaResponse } from "./quota-cache";
+import { createQuotaRefresher, type ViewState } from "./refresh";
 import { TavilyQuotaRpc } from "./rpc";
 
 type Context = Plugin.Context;
 
 export const PLUGIN_ID = "opencode-tavily-quota";
-// Tavily's `/usage` endpoint allows at most 10 requests per 10 minutes, so poll
-// once per window and rely on the `/tavily-quota` command for on-demand reads.
-const REFRESH_INTERVAL_MS = 600_000;
-// Show a persisted snapshot for a few minutes instead of fetching on every TUI
-// launch. Several launches in a row would otherwise exhaust the rate limit.
-const CACHE_TTL_MS = 5 * 60_000;
-// After a 429, skip automatic reads for a full rate-limit window.
-const RATE_LIMIT_BACKOFF_MS = 10 * 60_000;
-
-type ViewState =
-  | { status: "loading" }
-  | { status: "ready"; snapshot: QuotaSnapshot }
-  | { status: "error"; message: string };
 
 type ThemeColors = {
   text?: RGBA;
@@ -81,22 +66,32 @@ export function buildLines(state: ViewState, now: number = Date.now()): string[]
 
   const snapshot = state.snapshot;
   // Reset countdown sits between the heading and the bar, matching the sidebar
-  // order used by the built-in quota section.
-  return [formatResetLine(now), formatQuotaLine(snapshot)];
+  // order used by the built-in quota section. A transient failure is an extra
+  // warning line so the last good snapshot stays visible.
+  const lines = [formatResetLine(now), formatQuotaLine(snapshot)];
+  if (state.warning) lines.push(`⚠ ${state.warning}`);
+  return lines;
 }
 
-function TavilyQuotaSidebar(props: { context: Context; state: () => ViewState }) {
+function TavilyQuotaSidebar(props: {
+  context: Context;
+  state: () => ViewState;
+  clock: () => number;
+}) {
   const colors = () => readThemeColors(props.context.theme);
-  // Keep the quota line on one line; let an error message wrap instead of
-  // truncating it, since it can be longer than the sidebar.
-  const wrapMode = () => (props.state().status === "error" ? "word" : "none");
+  // Keep the quota line on one line; let an error/warning message wrap instead
+  // of truncating it, since it can be longer than the sidebar.
+  const wrapMode = () => {
+    const state = props.state();
+    return state.status !== "ready" || state.warning ? "word" : "none";
+  };
 
   return (
     <box gap={0} flexDirection="column">
       <text fg={colors().text}>
         <b>Tavily</b>
       </text>
-      {buildLines(props.state()).map((line) => (
+      {buildLines(props.state(), props.clock()).map((line) => (
         <text fg={colors().textMuted} wrapMode={wrapMode()}>
           {line}
         </text>
@@ -123,10 +118,12 @@ function TavilyQuotaCommands(props: {
           const next = await props.refresh(true);
           const message =
             next.status === "ready"
-              ? `${formatRemaining(next.snapshot)} · ${formatPercent(next.snapshot.percentRemaining)} · ${formatResetLine()}`
+              ? `${formatRemaining(next.snapshot)} · ${formatPercent(next.snapshot.percentRemaining)} · ${formatResetLine()}${next.warning ? ` · ${next.warning}` : ""}`
               : next.status === "error"
                 ? next.message
                 : "still loading…";
+          const variant =
+            next.status === "error" ? "error" : next.status === "ready" && next.warning ? "warning" : "info";
           // Tie the toast to the open session so the host can title it and offer
           // to open it if the session's family is not on screen.
           const route = props.context.ui.router.current();
@@ -134,7 +131,7 @@ function TavilyQuotaCommands(props: {
           props.context.ui.toast.show({
             title: "Tavily quota",
             message,
-            variant: next.status === "error" ? "error" : "info",
+            variant,
             sessionID,
           });
         },
@@ -149,87 +146,55 @@ export const TavilyQuotaTuiPlugin = Plugin.define({
   id: PLUGIN_ID,
   async setup(context) {
     const [state, setState] = createSignal<ViewState>({ status: "loading" });
-    // Persist the last successful snapshot so a fresh TUI launch can show it
-    // without spending one of the ten requests allowed per ten minutes.
-    const [cache, updateCache] = context.storage.store("quota", {
-      initial: { snapshot: null as QuotaSnapshot | null, at: 0 },
+    // A local minute clock drives the reset countdown independently of quota
+    // fetches, so it keeps ticking while the server is in a cooldown.
+    const [clock, setClock] = createSignal(Date.now());
+
+    const location = () => context.location ?? context.data.location.default();
+    // Resolve the RPC client on every call: the server can restart or
+    // reconnect while this TUI stays open.
+    const rpc = () => context.client.rpc(TavilyQuotaRpc);
+
+    const refresher = createQuotaRefresher({
+      refreshMs: context.options.refreshMs,
+      onState: (next) => setState(next),
+      onClock: (now) => setClock(now),
+      remote: async ({ force }) =>
+        (await rpc().usage({ force }, { location: location() })) as QuotaResponse,
+      invalidateRemote: async () => {
+        await rpc().invalidate({}, { location: location() });
+      },
     });
-    const apiKey = typeof context.options.apiKey === "string" ? context.options.apiKey : undefined;
-    const remote = context.client.rpc(TavilyQuotaRpc);
-    const refreshMs =
-      typeof context.options.refreshMs === "number" && context.options.refreshMs > 0
-        ? context.options.refreshMs
-        : REFRESH_INTERVAL_MS;
-
-    let disposed = false;
-    let inFlight = false;
-    let cooldownUntil = 0;
-
-    const refresh = async (force = false): Promise<ViewState> => {
-      if (inFlight) return state();
-      if (!force && Date.now() < cooldownUntil) return state();
-      inFlight = true;
-      try {
-        const result = await fetchQuotaWithFallback({
-          apiKey,
-          remote: () => remote.usage({}, {
-            location: context.location ?? context.data.location.default(),
-          }) as Promise<QuotaResult>,
-        });
-        if (result.ok) {
-          cooldownUntil = 0;
-          if (!disposed) setState({ status: "ready", snapshot: result.snapshot });
-          void updateCache((draft) => {
-            draft.snapshot = result.snapshot;
-            draft.at = Date.now();
-          }).catch(() => undefined);
-        } else {
-          // The endpoint allows 10 requests per 10 minutes. An explicit
-          // `/tavily-quota` run passes force=true and still tries; automatic
-          // reads wait out the window.
-          if (result.message.startsWith("rate limited")) {
-            cooldownUntil = Date.now() + RATE_LIMIT_BACKOFF_MS;
-          }
-          if (!disposed) setState({ status: "error", message: result.message });
-        }
-      } catch (error) {
-        // `fetchQuota` is written never to throw, but a rejected promise here
-        // must not take down the sidebar: surface it inline instead.
-        if (!disposed) {
-          setState({
-            status: "error",
-            message: error instanceof Error ? error.message : String(error),
-          });
-        }
-      } finally {
-        inFlight = false;
-      }
-      return state();
-    };
 
     const stopSidebar = context.ui.slot({
       append: "sidebar.content",
-      render: () => <TavilyQuotaSidebar context={context} state={state} />,
+      render: () => <TavilyQuotaSidebar context={context} state={state} clock={clock} />,
     });
 
     // `keymap.layer` reads Solid context, so it must be mounted from a slot
     // component rather than called directly during plugin setup.
     const stopCommands = context.ui.slot({
       append: "app",
-      render: () => <TavilyQuotaCommands context={context} refresh={refresh} />,
+      render: () => <TavilyQuotaCommands context={context} refresh={refresher.refresh} />,
     });
 
-    const cached = cache.snapshot;
-    if (cached && Date.now() - cache.at < CACHE_TTL_MS) {
-      setState({ status: "ready", snapshot: cached });
-    } else {
-      void refresh();
-    }
-    const interval = setInterval(() => void refresh(), refreshMs);
+    // Credential/integration changes can point at another Tavily account (or a
+    // rotated key), so drop the cached snapshot and refetch. The exact event
+    // names are from the OpenCode 2.2.x event declarations.
+    const unsubscribes = [
+      context.data.on("credential.switched", (event) => {
+        if (event.data.integrationID !== "tavily") return;
+        void refresher.invalidate();
+      }),
+      context.data.on("credential.updated", () => void refresher.invalidate()),
+      context.data.on("integration.updated", () => void refresher.invalidate()),
+    ];
+
+    refresher.start();
 
     return () => {
-      disposed = true;
-      clearInterval(interval);
+      refresher.dispose();
+      for (const unsubscribe of unsubscribes) unsubscribe();
       stopSidebar();
       stopCommands();
     };

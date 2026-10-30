@@ -2,7 +2,7 @@
 
 See how many Tavily API credits you have left without leaving OpenCode.
 
-![The Tavily quota section in the OpenCode session sidebar](docs/sidebar.png)
+![The Tavily quota section in the OpenCode session sidebar](https://raw.githubusercontent.com/cardin/opencode-tavily-quota/main/docs/sidebar.png)
 
 The plugin adds a **Tavily** section to the session sidebar with:
 
@@ -59,8 +59,11 @@ The sidebar refreshes every 10 minutes. To refresh immediately:
 - run `/tavily-quota`, or
 - press `Ctrl+P` and choose **Refresh Tavily quota**.
 
-A toast then shows the credits left, the percentage remaining, and the reset
-countdown.
+A manual refresh bypasses the server's fresh snapshot cache, but it still
+respects a `Retry-After` cooldown and keeps at least 65 seconds between real
+requests. A toast then shows the credits left, the percentage remaining, and the
+reset countdown. Switching Tavily credentials or updating the integration
+refreshes the sidebar automatically.
 
 ## Configuration
 
@@ -81,8 +84,8 @@ Options go on the plugin entry in `cli.json` or `opencode.json`:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `apiKey` | unset | Tavily API key. `{file:...}` and `{env:...}` are expanded by the plugin, so the raw key can stay out of the file. |
-| `refreshMs` | `600000` | How often to refresh, in milliseconds. Tavily allows 10 requests per 10 minutes, so keep this at or above `600000`. |
+| `apiKey` | unset | Tavily API key, read by the OpenCode server. `{file:...}` and `{env:...}` are expanded by the plugin, so the raw key can stay out of the file. |
+| `refreshMs` | `600000` | How often to refresh, in milliseconds. Values below `60000` or above the 32-bit timer maximum fall back to the default. Tavily allows 10 requests per 10 minutes, so keep this at or above `600000`. |
 
 `{file:PATH}` reads a file's trimmed contents; `~/` expands to your home
 directory. `{env:NAME}` reads an environment variable. A missing or unreadable
@@ -108,14 +111,20 @@ server's Tavily connection, install the plugin on the server as well.
   your local reset by a few hours.
 - Only quota numbers are sent back to the terminal; the API key stays with the
   code that talks to Tavily.
-- The sidebar reuses the last saved snapshot for up to five minutes on launch,
-  so opening several terminals does not use up the request limit.
+- The server caches the last snapshot for up to five minutes, enforces a
+  65-second minimum between real requests, and remembers a `Retry-After`
+  cooldown, so opening several terminals or restarting the TUI does not use up
+  the request limit. The cache is scoped to the credential, so
+  switching Tavily accounts cannot show another account's credits.
+- Tavily plan credits and pay-as-you-go credits are shown together. If the plan
+  is exhausted, any remaining PAYG credits keep the bar above zero.
 
 ## Development
 
-Source lives in `index.ts` (OpenCode server), `usage.ts` (Tavily client and
-formatting), and `tui.tsx` (sidebar and command). Run `npm install`, `npm test`,
-`npm run typecheck`, and `npm run build`.
+Source lives in `index.ts` (OpenCode server), `quota-cache.ts` (shared cache and
+rate-limit backoff), `refresh.ts` (TUI refresh policy), `usage.ts` (Tavily client
+and formatting), and `tui.tsx` (sidebar and command). Run `npm install`,
+`npm test`, `npm run typecheck`, and `npm run build`.
 
 ## License
 

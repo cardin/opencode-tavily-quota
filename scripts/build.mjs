@@ -48,6 +48,8 @@ await fs.mkdir(distDir, { recursive: true });
 const written = [
   await build("index.ts", [[typescriptPreset]]),
   await build("rpc.ts", [[typescriptPreset]]),
+  await build("quota-cache.ts", [[typescriptPreset]]),
+  await build("refresh.ts", [[typescriptPreset]]),
   await build("usage.ts", [[typescriptPreset]]),
   await build("tui.tsx", [
     [solidPreset, { moduleName: "@opentui/solid", generate: "universal" }],

@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  barPercent,
   deriveSnapshot,
   expandOptionValue,
   fetchQuota,
@@ -18,9 +19,11 @@ import {
   formatResetCountdown,
   formatResetLine,
   nextMonthlyResetAt,
+  parseRetryAfter,
   progressBar,
   resolveApiKey,
   SIDEBAR_WIDTH,
+  type TavilyUsagePayload,
 } from "./usage.ts";
 
 const KEY_PAYLOAD = {
@@ -380,4 +383,141 @@ test("fetchQuotaWithFallback uses OpenCode only when the CLI has no key", async 
   const connected = await fetchQuotaWithFallback({ env: {}, remote, fetchImpl });
   assert.deepEqual(connected, { ok: false, message: "not connected" });
   assert.equal(remoteCalls, 1);
+});
+
+test("fetchQuotaWithFallback reads an unreadable {file:...} reference only once", async () => {
+  let reads = 0;
+  const result = await fetchQuotaWithFallback({
+    env: {},
+    apiKey: "{file:/missing}",
+    readFile: () => {
+      reads++;
+      throw new Error("ENOENT");
+    },
+    remote: async () => ({ ok: false, message: "not connected" }),
+  });
+  assert.equal(reads, 1);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.message, /bad file reference/);
+});
+
+test("deriveSnapshot falls back to PAYG when the plan limit is zero", () => {
+  const result = deriveSnapshot({
+    account: {
+      current_plan: "Bootstrap",
+      plan_limit: 0,
+      plan_usage: 0,
+      paygo_limit: 100,
+      paygo_usage: 20,
+    },
+  }, 0);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.snapshot.limit, 100);
+  assert.equal(result.snapshot.used, 20);
+  assert.equal(result.snapshot.remaining, 80);
+  assert.equal(result.snapshot.percentRemaining, 80);
+});
+
+test("deriveSnapshot adds available PAYG credits after the plan is exhausted", () => {
+  const result = deriveSnapshot({
+    account: {
+      current_plan: "Researcher",
+      plan_limit: 100,
+      plan_usage: 100,
+      paygo_limit: 50,
+      paygo_usage: 10,
+    },
+  }, 0);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.snapshot.limit, 150);
+  assert.equal(result.snapshot.used, 110);
+  assert.equal(result.snapshot.remaining, 40);
+  assert.ok(Math.abs(result.snapshot.percentRemaining - (40 / 150) * 100) < 1e-9);
+});
+
+test("deriveSnapshot requires usage instead of inventing zero", () => {
+  const plan = deriveSnapshot({ account: { plan_limit: 1000 } }, 0);
+  assert.equal(plan.ok, false);
+  if (!plan.ok) assert.match(plan.message, /no plan usage/);
+
+  const paygo = deriveSnapshot({ account: { paygo_limit: 100 } }, 0);
+  assert.equal(paygo.ok, false);
+  if (!paygo.ok) assert.match(paygo.message, /no pay-as-you-go usage/);
+
+  const key = deriveSnapshot({ key: { limit: 100 } }, 0);
+  assert.equal(key.ok, false);
+  if (!key.ok) assert.match(key.message, /no credit usage/);
+});
+
+test("deriveSnapshot rejects a null or non-object /usage payload", () => {
+  for (const payload of [null, undefined, [], "nope", 42]) {
+    assert.deepEqual(
+      deriveSnapshot(payload as unknown as TavilyUsagePayload),
+      { ok: false, message: "invalid /usage response" },
+    );
+  }
+});
+
+test("formatPercent switches to zero decimals before the label overflows", () => {
+  assert.equal(formatPercent(9.94), "9.9%");
+  assert.equal(formatPercent(9.95), "10%");
+  assert.equal(formatPercent(9.96), "10%");
+  assert.equal(formatPercent(99.96), "100%");
+  assert.equal(formatPercent(4.25), "4.3%");
+});
+
+test("the 9.96% label fits the sidebar percent column", () => {
+  const line = formatQuotaLine({
+    planName: "Tavily",
+    used: 0,
+    limit: 100,
+    remaining: 9.96,
+    percentRemaining: 9.96,
+    updatedAt: 0,
+  });
+  assert.equal(line.length, SIDEBAR_WIDTH);
+  assert.ok(line.endsWith("8.0% left"));
+});
+
+test("the bar and its label use the same rounding", () => {
+  const line = formatQuotaLine({
+    planName: "Tavily",
+    used: 46,
+    limit: 100,
+    remaining: 54,
+    percentRemaining: 54,
+    updatedAt: 0,
+  }, 10);
+  assert.ok(line.startsWith("█████░░░░░"));
+  assert.ok(line.endsWith("50% left"));
+  assert.equal(barPercent(54, 10), 50);
+});
+
+test("parseRetryAfter accepts delta-seconds and HTTP dates", () => {
+  assert.equal(parseRetryAfter("120", 1_000), 120_000);
+  assert.equal(parseRetryAfter("0", 1_000), 0);
+  assert.equal(parseRetryAfter(null, 1_000), undefined);
+  assert.equal(parseRetryAfter("", 1_000), undefined);
+  assert.equal(parseRetryAfter("not a date", 1_000), undefined);
+  const now = Date.UTC(2026, 9, 30, 12, 0, 0);
+  assert.equal(parseRetryAfter(new Date(now + 5_000).toUTCString(), now), 5_000);
+});
+
+test("fetchQuota surfaces Retry-After on a 429", async () => {
+  const result = await fetchQuota({
+    env: { TAVILY_API_KEY: "k" },
+    now: 1_000,
+    fetchImpl: (async () =>
+      new Response("rate limited", {
+        status: 429,
+        headers: { "Retry-After": "120" },
+      })) as typeof fetch,
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.rateLimited, true);
+    assert.equal(result.retryAfterMs, 120_000);
+  }
 });
