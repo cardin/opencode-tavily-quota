@@ -17,24 +17,6 @@ import { isAbsolute, join, resolve } from "node:path";
 export const USAGE_URL = "https://api.tavily.com/usage";
 export const DEFAULT_TIMEOUT_MS = 15_000;
 
-/**
- * Sidebar content width shared with the built-in quota section, which renders
- * in a 36-column sidebar (`TUI_SIDEBAR_MAX_WIDTH` in opencode-quota).
- */
-export const SIDEBAR_WIDTH = 36;
-/**
- * Width the quota section reserves for its `100% left` / `100% used` label, so
- * labels line up vertically across sections.
- */
-export const PERCENT_COLUMN_WIDTH = "100% left".length;
-/** Gap between the bar and its label, matching the quota section's separator. */
-export const BAR_SEPARATOR = "  ";
-/**
- * Bar width that lines the Tavily bar up with the quota section's bars:
- * `36 (sidebar) − 2 (separator) − 9 (percent column) = 25`.
- */
-export const DEFAULT_BAR_WIDTH = SIDEBAR_WIDTH - BAR_SEPARATOR.length - PERCENT_COLUMN_WIDTH;
-
 /** Shape of `GET https://api.tavily.com/usage` (all fields optional). */
 export interface TavilyUsagePayload {
   key?: {
@@ -292,48 +274,12 @@ export function deriveSnapshot(
  * Format a remaining percentage for the sidebar.
  *
  * Values that round to `10.0` at one decimal place switch to zero decimals so
- * the label never grows past the 9-character percent column (`10% left`).
+ * the label never exceeds the four-character percent column (`100%`).
  */
 export function formatPercent(percentRemaining: number): string {
   const clamped = Math.max(0, Math.min(100, percentRemaining));
   const tenths = Math.round(clamped * 10) / 10;
   return `${clamped.toFixed(tenths >= 10 ? 0 : 1)}%`;
-}
-
-/** Number of filled cells in a bar of `width` cells. */
-function barFill(percentRemaining: number, width: number): { filled: number; width: number } {
-  const clamped = Math.max(0, Math.min(100, percentRemaining));
-  const safeWidth = Math.max(1, Math.floor(width));
-  return { filled: Math.round((clamped / 100) * safeWidth), width: safeWidth };
-}
-
-/** Render a fixed-width progress bar for a remaining percentage. */
-export function progressBar(percentRemaining: number, width = DEFAULT_BAR_WIDTH): string {
-  const bar = barFill(percentRemaining, width);
-  return "█".repeat(bar.filled) + "░".repeat(Math.max(0, bar.width - bar.filled));
-}
-
-/** The percentage the rendered bar actually shows, so its label can match. */
-export function barPercent(percentRemaining: number, width = DEFAULT_BAR_WIDTH): number {
-  const bar = barFill(percentRemaining, width);
-  return (bar.filled / bar.width) * 100;
-}
-
-/**
- * Compose the single sidebar line: the bar plus a `84% left` label.
- *
- * The bar matches the built-in quota section's bars and the label sits in the
- * same right-aligned percent column, so the two sections line up. The exact
- * credit count is still available from `formatRemaining` (used by the toast).
- * The label is derived from the rendered bar so the number and the filled cells
- * never disagree.
- */
-export function formatQuotaLine(
-  snapshot: QuotaSnapshot,
-  width = DEFAULT_BAR_WIDTH,
-): string {
-  const label = `${formatPercent(barPercent(snapshot.percentRemaining, width))} left`;
-  return `${progressBar(snapshot.percentRemaining, width)}${BAR_SEPARATOR}${label.padStart(PERCENT_COLUMN_WIDTH)}`;
 }
 
 /** Format the headline line, e.g. `839 credits left`. */

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import plugin from "./index.ts";
+import plugin from "../index.ts";
 
 type Handlers = {
   usage: (input?: { force?: boolean }) => Promise<unknown>;

@@ -7,8 +7,8 @@ import {
   DEFAULT_MIN_INTERVAL_MS,
   createQuotaService,
   keyIdentity,
-} from "./quota-cache.ts";
-import type { QuotaResult, QuotaSnapshot } from "./usage.ts";
+} from "../quota-cache.ts";
+import type { QuotaResult, QuotaSnapshot } from "../usage.ts";
 
 function memoryStorage(): {
   get(key: string): Promise<unknown>;

@@ -1,5 +1,9 @@
+.ruff_cache/
 node_modules/
 dist/
+build/
+coverage/
 *.log
+.env*
 .DS_Store
 *.tgz

@@ -20,11 +20,16 @@ import { Plugin } from "@opencode/plugin/tui";
 import type { ResolvedTheme } from "@opencode/theme/tui";
 import { createSignal } from "solid-js";
 import {
-  formatPercent,
-  formatQuotaLine,
-  formatRemaining,
-  formatResetLine,
-} from "./usage";
+  DEFAULT_DISPLAY_SETTINGS,
+  SIDEBAR_WIDTH,
+  colorRoleFor,
+  formatQuotaLineSegments,
+  resolveDisplaySettings,
+  textLine,
+  type DisplayLine,
+  type DisplaySettings,
+} from "./display";
+import { formatPercent, formatRemaining, formatResetLine } from "./usage";
 import type { QuotaResponse } from "./quota-cache";
 import { createQuotaRefresher, type ViewState } from "./refresh";
 import { TavilyQuotaRpc } from "./rpc";
@@ -34,8 +39,11 @@ type Context = Plugin.Context;
 export const PLUGIN_ID = "opencode-tavily-quota";
 
 type ThemeColors = {
-  text?: RGBA;
-  textMuted?: RGBA;
+  text: RGBA;
+  muted: RGBA;
+  good: RGBA;
+  warning: RGBA;
+  low: RGBA;
 };
 
 /**
@@ -48,28 +56,45 @@ type LegacyTextTokens = ResolvedTheme["text"] & {
   subdued?: RGBA;
 };
 
+type LegacyFeedbackTokens = {
+  feedback?: {
+    success?: { base?: RGBA };
+    warning?: { base?: RGBA };
+    error?: { base?: RGBA };
+  };
+};
+
 function readThemeColors(theme: ResolvedTheme): ThemeColors {
   const text = theme.text as LegacyTextTokens;
+  const feedback = (text as unknown as LegacyFeedbackTokens).feedback;
+  const base = text.default ?? text.base;
+  const muted = text.subdued ?? text.muted;
   return {
-    text: text.default ?? text.base,
-    textMuted: text.subdued ?? text.muted,
+    text: base,
+    muted,
+    good: feedback?.success?.base ?? base,
+    warning: feedback?.warning?.base ?? base,
+    low: feedback?.error?.base ?? base,
   };
 }
 
-export function buildLines(state: ViewState, now: number = Date.now()): string[] {
+export function buildLines(
+  state: ViewState,
+  now: number = Date.now(),
+  settings: DisplaySettings = DEFAULT_DISPLAY_SETTINGS,
+  width: number = SIDEBAR_WIDTH,
+): DisplayLine[] {
   if (state.status === "loading") {
-    return ["loading…"];
+    return [textLine("loading…")];
   }
   if (state.status === "error") {
-    return [`⚠ ${state.message}`];
+    return [textLine(`⚠ ${state.message}`)];
   }
 
-  const snapshot = state.snapshot;
-  // Reset countdown sits between the heading and the bar, matching the sidebar
-  // order used by the built-in quota section. A transient failure is an extra
+  // The quota line fills the available width; a transient failure is an extra
   // warning line so the last good snapshot stays visible.
-  const lines = [formatResetLine(now), formatQuotaLine(snapshot)];
-  if (state.warning) lines.push(`⚠ ${state.warning}`);
+  const lines = [formatQuotaLineSegments(state.snapshot, now, settings, width)];
+  if (state.warning) lines.push(textLine(`⚠ ${state.warning}`));
   return lines;
 }
 
@@ -79,23 +104,36 @@ function TavilyQuotaSidebar(props: {
   clock: () => number;
 }) {
   const colors = () => readThemeColors(props.context.theme);
-  // Keep the quota line on one line; let an error/warning message wrap instead
-  // of truncating it, since it can be longer than the sidebar.
-  const wrapMode = () => {
-    const state = props.state();
-    return state.status !== "ready" || state.warning ? "word" : "none";
-  };
+  const settings = () => resolveDisplaySettings(props.context.options);
+  const [width, setWidth] = createSignal(SIDEBAR_WIDTH);
 
   return (
-    <box gap={0} flexDirection="column">
+    <box
+      gap={0}
+      flexDirection="column"
+      onSizeChange={function () {
+        const measured = this.width;
+        if (measured > 0 && measured !== width()) {
+          queueMicrotask(() => setWidth(measured));
+        }
+      }}
+    >
       <text fg={colors().text}>
         <b>Tavily</b>
       </text>
-      {buildLines(props.state(), props.clock()).map((line) => (
-        <text fg={colors().textMuted} wrapMode={wrapMode()}>
-          {line}
-        </text>
-      ))}
+      {buildLines(props.state(), props.clock(), settings(), width()).map((line) => {
+        const palette = colors();
+        const current = settings();
+        return (
+          <text wrapMode={line.wrapMode} fg={palette.muted}>
+            {line.segments.map((segment) => (
+              <span style={{ fg: palette[colorRoleFor(segment, current, line.level)] }}>
+                {segment.text}
+              </span>
+            ))}
+          </text>
+        );
+      })}
     </box>
   );
 }

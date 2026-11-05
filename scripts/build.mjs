@@ -51,6 +51,7 @@ const written = [
   await build("quota-cache.ts", [[typescriptPreset]]),
   await build("refresh.ts", [[typescriptPreset]]),
   await build("usage.ts", [[typescriptPreset]]),
+  await build("display.ts", [[typescriptPreset]]),
   await build("tui.tsx", [
     [solidPreset, { moduleName: "@opentui/solid", generate: "universal" }],
     [typescriptPreset],

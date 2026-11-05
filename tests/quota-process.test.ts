@@ -14,8 +14,8 @@ import {
   keyIdentity,
   type QuotaResponse,
   type QuotaStorage,
-} from "./quota-cache.ts";
-import type { QuotaResult } from "./usage.ts";
+} from "../quota-cache.ts";
+import type { QuotaResult } from "../usage.ts";
 
 const execFileAsync = promisify(execFile);
 const initialTime = Date.UTC(2026, 9, 30, 12);
@@ -168,7 +168,7 @@ const worker = `
 `;
 
 async function runWorker(directory: string, mode = "success", now = initialTime) {
-  const moduleUrl = new URL("./quota-cache.ts", import.meta.url).href;
+  const moduleUrl = new URL("../quota-cache.ts", import.meta.url).href;
   const { stdout } = await execFileAsync(process.execPath,
     ["--import", "tsx", "--input-type=module", "-e", worker, directory, moduleUrl, String(now), mode],
     { timeout: 20_000 });

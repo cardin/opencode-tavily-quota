@@ -1,30 +1,26 @@
 /**
  * Unit tests for the Tavily quota client.
  *
- * Run with any TypeScript-aware test runner, e.g. `npx tsx --test usage.test.ts`.
+ * Run with any TypeScript-aware test runner, e.g. `npx tsx --test tests/usage.test.ts`.
  */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  barPercent,
   deriveSnapshot,
   expandOptionValue,
   fetchQuota,
   fetchQuotaWithFallback,
   formatPercent,
-  formatQuotaLine,
   formatRemaining,
   formatResetCountdown,
   formatResetLine,
   nextMonthlyResetAt,
   parseRetryAfter,
-  progressBar,
   resolveApiKey,
-  SIDEBAR_WIDTH,
   type TavilyUsagePayload,
-} from "./usage.ts";
+} from "../usage.ts";
 
 const KEY_PAYLOAD = {
   key: { usage: 161, limit: null, search_usage: 158 },
@@ -92,47 +88,6 @@ test("formatPercent and formatRemaining render sidebar text", () => {
     }),
     "839 credits left",
   );
-});
-
-test("progressBar renders a fixed width and clamps out-of-range input", () => {
-  assert.equal(progressBar(100, 10), "██████████");
-  assert.equal(progressBar(0, 10), "░░░░░░░░░░");
-  assert.equal(progressBar(50, 10), "█████░░░░░");
-  assert.equal(progressBar(200, 4), "████");
-  assert.equal(progressBar(-50, 4), "░░░░");
-});
-
-test("formatQuotaLine matches the quota section's bar width on one line", () => {
-  const snapshot = {
-    planName: "Researcher",
-    used: 161,
-    limit: 1000,
-    remaining: 839,
-    percentRemaining: 83.9,
-    updatedAt: 0,
-  };
-
-  const line = formatQuotaLine(snapshot);
-  // 25-char bar (the quota section's 36-column sidebar leaves 25 after its
-  // separator and 9-char percent column), then a right-aligned `84% left`.
-  assert.equal(line, "█████████████████████░░░░   84% left");
-  assert.equal(line.length, SIDEBAR_WIDTH);
-
-  // An explicit width still controls the bar length.
-  assert.ok(formatQuotaLine(snapshot, 4).startsWith(progressBar(83.9, 4)));
-});
-
-test("formatQuotaLine keeps a full label inside the percent column", () => {
-  const line = formatQuotaLine({
-    planName: "Tavily",
-    used: 0,
-    limit: 100,
-    remaining: 100,
-    percentRemaining: 100,
-    updatedAt: 0,
-  });
-  assert.ok(line.endsWith("100% left"));
-  assert.equal(line.length, SIDEBAR_WIDTH);
 });
 
 test("nextMonthlyResetAt is 00:00 UTC on the 1st of the next month", () => {
@@ -516,33 +471,6 @@ test("formatPercent switches to zero decimals before the label overflows", () =>
   assert.equal(formatPercent(9.96), "10%");
   assert.equal(formatPercent(99.96), "100%");
   assert.equal(formatPercent(4.25), "4.3%");
-});
-
-test("the 9.96% label fits the sidebar percent column", () => {
-  const line = formatQuotaLine({
-    planName: "Tavily",
-    used: 0,
-    limit: 100,
-    remaining: 9.96,
-    percentRemaining: 9.96,
-    updatedAt: 0,
-  });
-  assert.equal(line.length, SIDEBAR_WIDTH);
-  assert.ok(line.endsWith("8.0% left"));
-});
-
-test("the bar and its label use the same rounding", () => {
-  const line = formatQuotaLine({
-    planName: "Tavily",
-    used: 46,
-    limit: 100,
-    remaining: 54,
-    percentRemaining: 54,
-    updatedAt: 0,
-  }, 10);
-  assert.ok(line.startsWith("█████░░░░░"));
-  assert.ok(line.endsWith("50% left"));
-  assert.equal(barPercent(54, 10), 50);
 });
 
 test("parseRetryAfter accepts delta-seconds and HTTP dates", () => {

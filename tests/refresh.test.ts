@@ -10,8 +10,8 @@ import {
   resolveRefreshMs,
   type TimerHandle,
   type ViewState,
-} from "./refresh.ts";
-import type { QuotaSnapshot } from "./usage.ts";
+} from "../refresh.ts";
+import type { QuotaSnapshot } from "../usage.ts";
 
 function snapshot(remaining = 80): QuotaSnapshot {
   return {
