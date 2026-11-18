@@ -62,7 +62,7 @@ export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
     warningBelow: 50,
     lowBelow: 20,
   },
-  evenUse: false,
+  evenUse: true,
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -104,7 +104,7 @@ export function resolveDisplaySettings(options: unknown): DisplaySettings {
 
   return {
     colors: { enabled, warningBelow, lowBelow },
-    evenUse: typeof root.evenUse === "boolean" ? root.evenUse : false,
+    evenUse: typeof root.evenUse === "boolean" ? root.evenUse : DEFAULT_DISPLAY_SETTINGS.evenUse,
   };
 }
 

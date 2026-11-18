@@ -64,8 +64,8 @@ test("buildLines uses the available sidebar width and right-aligns the reset", (
   }
 });
 
-test("buildLines adds the mark only when evenUse is enabled", () => {
-  const on = resolveDisplaySettings({ evenUse: true });
+test("buildLines shows the mark by default and hides it when evenUse is false", () => {
+  const on = resolveDisplaySettings({});
   const off = resolveDisplaySettings({ evenUse: false });
   const withMark = buildLines({ status: "ready", snapshot }, now, on);
   const withoutMark = buildLines({ status: "ready", snapshot }, now, off);

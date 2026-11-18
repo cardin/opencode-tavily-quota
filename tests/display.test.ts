@@ -67,11 +67,11 @@ test("resolveDisplaySettings uses defaults and partial valid values", () => {
   assert.deepEqual(resolveDisplaySettings({}), DEFAULT_DISPLAY_SETTINGS);
   assert.deepEqual(resolveDisplaySettings({ colors: { warningBelow: 70 } }), {
     colors: { enabled: true, warningBelow: 70, lowBelow: 20 },
-    evenUse: false,
-  });
-  assert.deepEqual(resolveDisplaySettings({ colors: { lowBelow: 30 }, evenUse: true }), {
-    colors: { enabled: true, warningBelow: 50, lowBelow: 30 },
     evenUse: true,
+  });
+  assert.deepEqual(resolveDisplaySettings({ colors: { lowBelow: 30 }, evenUse: false }), {
+    colors: { enabled: true, warningBelow: 50, lowBelow: 30 },
+    evenUse: false,
   });
   assert.equal(resolveDisplaySettings({ colors: { enabled: false } }).colors.enabled, false);
 });
@@ -79,7 +79,7 @@ test("resolveDisplaySettings uses defaults and partial valid values", () => {
 test("resolveDisplaySettings falls back to 50/20 for invalid thresholds", () => {
   const defaults = {
     colors: { enabled: true, warningBelow: 50, lowBelow: 20 },
-    evenUse: false,
+    evenUse: true,
   };
   assert.deepEqual(resolveDisplaySettings({ colors: { warningBelow: 120 } }), defaults);
   assert.deepEqual(resolveDisplaySettings({ colors: { warningBelow: -1 } }), defaults);
@@ -87,7 +87,7 @@ test("resolveDisplaySettings falls back to 50/20 for invalid thresholds", () => 
   assert.deepEqual(resolveDisplaySettings({ colors: { warningBelow: 50, lowBelow: 80 } }), defaults);
   assert.deepEqual(resolveDisplaySettings({ colors: [] }), defaults);
   assert.equal(resolveDisplaySettings({ colors: { enabled: "no" } }).colors.enabled, true);
-  assert.equal(resolveDisplaySettings({ evenUse: "yes" }).evenUse, false);
+  assert.equal(resolveDisplaySettings({ evenUse: "yes" }).evenUse, true);
 });
 
 test("levelOf classifies the displayed rounded percentage", () => {
@@ -211,7 +211,7 @@ test("formatCompactResetCountdown fits five columns without changing toast forma
 
 test("formatQuotaLineSegments renders the full 37-column line", () => {
   const line = formatQuotaLineSegments(SNAPSHOT, NOW_84);
-  assert.equal(lineText(line), "█".repeat(21) + "░".repeat(4) + "  84%   6.5d");
+  assert.equal(lineText(line), "█".repeat(5) + "┃" + "█".repeat(15) + "░".repeat(4) + "  84%   6.5d");
   assert.equal(lineText(line).length, SIDEBAR_WIDTH);
   assert.equal(line.level, "good");
   assert.equal(line.wrapMode, "none");
@@ -233,14 +233,14 @@ test("bar, percentage, and reset right edge align with opencode-quota's rows", (
 
 test("formatQuotaLineSegments fits the longest countdown", () => {
   const line = formatQuotaLineSegments(snapshot(100), NOW_MAX);
-  assert.equal(lineText(line), "█".repeat(25) + " 100%  30.9d");
+  assert.equal(lineText(line), "█".repeat(24) + "┃ 100%  30.9d");
   assert.equal(lineText(line).length, SIDEBAR_WIDTH);
   assert.equal(line.level, "good");
 });
 
 test("formatQuotaLineSegments fits the shortest actual countdown", () => {
   const line = formatQuotaLineSegments(snapshot(0), NOW_SHORT);
-  assert.equal(lineText(line), "░".repeat(25) + " 0.0%     1m");
+  assert.equal(lineText(line), "┃" + "░".repeat(24) + " 0.0%     1m");
   assert.equal(lineText(line).length, SIDEBAR_WIDTH);
   assert.equal(line.level, "low");
 });
