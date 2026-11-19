@@ -326,6 +326,16 @@ export function formatResetLine(now: number = Date.now()): string {
   return `resets in ${formatResetCountdown(nextMonthlyResetAt(now), now)}`;
 }
 
+/** Shared summary for manual refreshes in the session and terminal. */
+export function formatQuotaSummary(snapshot: QuotaSnapshot, warning?: string): string {
+  return [
+    formatRemaining(snapshot),
+    formatPercent(snapshot.percentRemaining),
+    formatResetLine(),
+    ...(warning ? [warning] : []),
+  ].join(" · ");
+}
+
 /**
  * Fetch and derive the current Tavily quota.
  *

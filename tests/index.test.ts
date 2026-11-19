@@ -12,6 +12,10 @@ type Handlers = {
 };
 
 type FakeContext = Parameters<typeof plugin.setup>[0];
+type CommandTransform = Parameters<FakeContext["command"]["transform"]>[0];
+type CommandDefinition = Parameters<Parameters<CommandTransform>[0]["add"]>[0];
+type SessionNotice = Parameters<FakeContext["session"]["synthetic"]>[0];
+const sessionID = "ses_test" as Parameters<CommandDefinition["execute"]>[0]["sessionID"];
 
 /** Run a test without an ambient TAVILY_API_KEY so precedence is deterministic. */
 async function withoutAmbientKey<T>(run: () => Promise<T>): Promise<T> {
@@ -48,9 +52,15 @@ function memoryStorage(): {
   };
 }
 
-async function setup(ctx: Record<string, unknown>): Promise<Handlers> {
+async function setup(ctx: Record<string, unknown>): Promise<Handlers & { command: CommandDefinition }> {
   let handlers: Handlers | undefined;
+  let command: CommandDefinition | undefined;
   const context = {
+    command: {
+      transform: async (register: CommandTransform) => {
+        register({ add: (definition) => { command = definition; } });
+      },
+    },
     rpc: {
       register: async (_definition: unknown, registered: Handlers) => {
         handlers = registered;
@@ -61,7 +71,8 @@ async function setup(ctx: Record<string, unknown>): Promise<Handlers> {
   };
   await plugin.setup(context as unknown as FakeContext);
   assert.ok(handlers);
-  return handlers;
+  assert.ok(command);
+  return { ...handlers, command };
 }
 
 function mockFetch(
@@ -113,6 +124,64 @@ test("server RPC resolves the active Tavily login and returns quota without the 
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+test("server slash command posts quota without resuming the model and shares the RPC rate limit", async () => {
+  await withoutAmbientKey(async () => {
+    const originalFetch = globalThis.fetch;
+    const mocked = mockFetch({ key: { usage: 2, limit: 10 } });
+    globalThis.fetch = mocked.fetch;
+    const notices: SessionNotice[] = [];
+    try {
+      const { usage, command } = await setup({
+        options: { apiKey: "test-key" },
+        session: { synthetic: async (notice: SessionNotice) => { notices.push(notice); } },
+      });
+      assert.equal(command.name, "tavily-quota");
+      assert.match(command.description ?? "", /Refresh Tavily quota/);
+      await usage();
+      await command.execute({
+        sessionID,
+        prompt: { text: "" },
+        delivery: "steer",
+      });
+      assert.equal(mocked.calls(), 1);
+      assert.equal(notices.length, 1);
+      assert.deepEqual(notices[0], {
+        sessionID: "ses_test",
+        delivery: "steer",
+        resume: false,
+        description: "Tavily quota",
+        text: notices[0].text,
+      });
+      assert.match(notices[0].text, /^8 credits left · 80% · resets in /);
+      assert.doesNotMatch(notices[0].text, /test-key/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("server slash command reports a missing Tavily connection in the invoking session", async () => {
+  await withoutAmbientKey(async () => {
+    const notices: SessionNotice[] = [];
+    const { command } = await setup({
+      integration: { connection: { active: async () => undefined } },
+      session: { synthetic: async (notice: SessionNotice) => { notices.push(notice); } },
+    });
+    await command.execute({
+      sessionID,
+      prompt: { text: "" },
+      delivery: "queue",
+    });
+    assert.deepEqual(notices, [{
+      sessionID: "ses_test",
+      delivery: "queue",
+      resume: false,
+      description: "Tavily quota",
+      text: "no active Tavily connection (run opencode auth login tavily)",
+    }]);
   });
 });
 

@@ -1,6 +1,6 @@
 /**
  * Server entrypoint. Resolve the active Tavily credential and fetch quota
- * here; only the quota result crosses the RPC boundary to the TUI.
+ * here; only quota results are exposed to clients.
  *
  * The cache and the 429 cooldown live in server storage, so every TUI instance
  * and every restart shares them. Credential precedence matches the README:
@@ -11,7 +11,7 @@
 import { Plugin } from "@opencode/plugin";
 import { TavilyQuotaRpc } from "./rpc";
 import { createQuotaService, createSharedQuotaStorage, keyIdentity } from "./quota-cache";
-import { fetchQuota, resolveApiKey } from "./usage";
+import { fetchQuota, formatQuotaSummary, resolveApiKey } from "./usage";
 
 export const PLUGIN_ID = "opencode-tavily-quota";
 
@@ -138,6 +138,26 @@ export default Plugin.define({
         await service.invalidate();
         return { ok: true };
       },
+    });
+
+    await ctx.command.transform((editor) => {
+      editor.add({
+        name: "tavily-quota",
+        description: "Refresh Tavily quota and show the credits left",
+        execute: async ({ sessionID, delivery }) => {
+          const result = await service.usage(true);
+          const warning = result.ok ? undefined : result.message ?? "quota request failed";
+          await ctx.session.synthetic({
+            sessionID,
+            delivery,
+            resume: false,
+            description: "Tavily quota",
+            text: result.snapshot
+              ? formatQuotaSummary(result.snapshot, warning)
+              : warning ?? "quota unavailable",
+          });
+        },
+      });
     });
   },
 });

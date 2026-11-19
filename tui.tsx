@@ -29,7 +29,7 @@ import {
   type DisplayLine,
   type DisplaySettings,
 } from "./display";
-import { formatPercent, formatRemaining, formatResetLine } from "./usage";
+import { formatQuotaSummary } from "./usage";
 import type { QuotaResponse } from "./quota-cache";
 import { createQuotaRefresher, type ViewState } from "./refresh";
 import { TavilyQuotaRpc } from "./rpc";
@@ -151,12 +151,11 @@ function TavilyQuotaCommands(props: {
         description: "Re-fetch remaining Tavily API credits and show a summary",
         group: "Tavily",
         palette: true,
-        slash: { name: "tavily-quota" },
-        run: async () => {
+          run: async () => {
           const next = await props.refresh(true);
           const message =
             next.status === "ready"
-              ? `${formatRemaining(next.snapshot)} · ${formatPercent(next.snapshot.percentRemaining)} · ${formatResetLine()}${next.warning ? ` · ${next.warning}` : ""}`
+                ? formatQuotaSummary(next.snapshot, next.warning)
               : next.status === "error"
                 ? next.message
                 : "still loading…";
